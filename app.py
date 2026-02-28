@@ -135,27 +135,36 @@ def build_progress_chart(season):
 
     actual_cumulative = season.weather["cumulative_gdd"]
     window_days = len(actual_cumulative)
-    x_days = list(range(1, window_days + 1))
+    x_actual = list(range(1, window_days + 1))
     t_base = season.params["t_base"]
     t_upper = season.params["t_upper"]
 
     upper_daily = t_upper - t_base
-    ideal_gdd = [upper_daily * i for i in x_days]
+    harvest_gdd = season.params["stages"].get("harvest", 0)
+
+    # Extend ideal line to harvest
+    if upper_daily > 0 and harvest_gdd > 0:
+        days_to_harvest = int(harvest_gdd / upper_daily) + 1
+    else:
+        days_to_harvest = window_days
+    total_days = max(window_days, days_to_harvest)
+    x_ideal = list(range(1, total_days + 1))
+    ideal_gdd = [upper_daily * i for i in x_ideal]
 
     fig.add_trace(go.Scatter(
-        x=x_days, y=ideal_gdd,
+        x=x_ideal, y=ideal_gdd,
         mode="lines", name="Ideal GDD",
         line=dict(dash="dash", width=1.5, color="gray"),
     ))
 
     fig.add_trace(go.Scatter(
-        x=x_days, y=actual_cumulative.tolist(),
+        x=x_actual, y=actual_cumulative.tolist(),
         mode="lines", name="Actual GDD",
         line=dict(width=2, color="#1f77b4"),
     ))
 
     fig.add_trace(go.Scatter(
-        x=[x_days[-1]], y=[actual_cumulative.iloc[-1]],
+        x=[x_actual[-1]], y=[actual_cumulative.iloc[-1]],
         mode="markers", name="Current",
         marker=dict(size=10, color="#1f77b4"),
         showlegend=False,
