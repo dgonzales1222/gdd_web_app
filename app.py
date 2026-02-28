@@ -123,7 +123,7 @@ def build_map_figure(lat=None, lon=None, location_name=""):
             zoom=zoom,
         ),
         margin=dict(l=0, r=0, t=0, b=0),
-        height=400,
+        height=250,
         showlegend=False,
     )
     return fig
@@ -260,6 +260,66 @@ def build_planning_chart(weather_df, crop_params, crop_id, location_name, planti
     return fig, stage_dates
 
 
+def build_temperature_chart(weather_df, location_name, planting_date):
+    """Build a Plotly chart showing daily Tmin and Tmax over time."""
+    fig = go.Figure()
+
+    dates = weather_df["date"]
+
+    fig.add_trace(go.Scatter(
+        x=dates, y=weather_df["tmax"],
+        mode="lines", name="Tmax",
+        line=dict(width=1.5, color="#d62728"),
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=dates, y=weather_df["tmin"],
+        mode="lines", name="Tmin",
+        line=dict(width=1.5, color="#1f77b4"),
+        fill="tonexty",
+        fillcolor="rgba(31,119,180,0.15)",
+    ))
+
+    fig.update_layout(
+        title=f"Daily Temperature \u2013 {location_name}",
+        xaxis_title="Date",
+        yaxis_title="Temperature (\u00b0C)",
+        template="plotly_white",
+        height=300,
+    )
+    return fig
+
+
+def build_stage_table(crop_params, crop_label):
+    """Build an HTML table showing cumulative GDD thresholds per growth stage."""
+    stages = crop_params["stages"]
+    header = html.Tr([
+        html.Th("Growth Stage", style={"padding": "6px 12px", "textAlign": "left"}),
+        html.Th("Cumulative GDD", style={"padding": "6px 12px", "textAlign": "right"}),
+    ])
+    rows = []
+    for stage_name in ["initial", "development", "mid_season", "harvest"]:
+        gdd = stages.get(stage_name, "N/A")
+        rows.append(html.Tr([
+            html.Td(stage_name.replace("_", " ").title(), style={"padding": "4px 12px"}),
+            html.Td(f"{gdd}", style={"padding": "4px 12px", "textAlign": "right"}),
+        ]))
+
+    return html.Div([
+        html.H4(f"GDD Thresholds \u2013 {crop_label}", style={"marginBottom": "6px"}),
+        html.Table(
+            [html.Thead(header), html.Tbody(rows)],
+            style={
+                "borderCollapse": "collapse",
+                "width": "100%",
+                "border": "1px solid #dee2e6",
+                "marginBottom": "16px",
+                "fontSize": "14px",
+            },
+        ),
+    ])
+
+
 def generate_pdf_report(report_data, chart_fig):
     """Generate a 1-page PDF report and return it as bytes."""
     pdf = FPDF()
@@ -324,7 +384,7 @@ def generate_pdf_report(report_data, chart_fig):
     pdf.set_font("Helvetica", "I", 8)
     pdf.cell(0, 5, "Data source: Open-Meteo (open-meteo.com) | Based on FAO56rev GDD framework", align="C")
 
-    return pdf.output()
+    return bytes(pdf.output())
 
 
 # ---------------------------------------------------------------------------
@@ -350,10 +410,10 @@ crop_name_options = [
 app.layout = html.Div(
     style={"display": "flex", "fontFamily": "Arial, sans-serif", "minHeight": "100vh"},
     children=[
-        # --- Sidebar ---
+        # --- Left panel: Inputs ---
         html.Div(
             style={
-                "width": "340px",
+                "width": "380px",
                 "padding": "20px",
                 "backgroundColor": "#f8f9fa",
                 "borderRight": "1px solid #dee2e6",
@@ -362,6 +422,11 @@ app.layout = html.Div(
             children=[
                 html.H2("GDD Crop Phenology Tracker", style={"marginTop": 0}),
                 html.Hr(),
+
+                # Map
+                dcc.Graph(id="map-graph", figure=build_map_figure(),
+                          config={"scrollZoom": True},
+                          style={"marginBottom": "12px"}),
 
                 # Location search
                 html.Label("Search Location", style={"fontWeight": "bold"}),
@@ -450,12 +515,57 @@ app.layout = html.Div(
                     },
                 ),
 
+                # Documentation link
+                html.A(
+                    "Documentation",
+                    href="https://open-meteo.com/en/docs",
+                    target="_blank",
+                    style={
+                        "display": "block",
+                        "textAlign": "center",
+                        "color": "#007bff",
+                        "fontSize": "13px",
+                    },
+                ),
+
+                # Hidden stores
+                dcc.Store(id="store-location", data={}),
+                dcc.Store(id="store-report", data={}),
+                dcc.Store(id="store-chart", data={}),
+            ],
+        ),
+
+        # --- Right panel: Outputs ---
+        html.Div(
+            style={"flex": "1", "padding": "20px", "overflowY": "auto"},
+            children=[
+                # GDD stage thresholds table
+                html.Div(id="stage-table"),
+
                 # Results
                 dcc.Loading(
                     id="loading-results",
                     type="default",
                     children=html.Div(id="results-panel"),
                 ),
+
+                html.Div(style={"height": "20px"}),
+
+                # GDD Chart
+                dcc.Loading(
+                    id="loading-chart",
+                    type="default",
+                    children=dcc.Graph(id="gdd-chart", figure=go.Figure()),
+                ),
+
+                # Temperature Chart
+                dcc.Loading(
+                    id="loading-temp-chart",
+                    type="default",
+                    children=dcc.Graph(id="temp-chart", figure=go.Figure()),
+                ),
+
+                html.Div(style={"height": "12px"}),
 
                 # Download PDF
                 html.Button(
@@ -477,25 +587,6 @@ app.layout = html.Div(
                     },
                 ),
                 dcc.Download(id="download-pdf"),
-
-                # Hidden stores
-                dcc.Store(id="store-location", data={}),
-                dcc.Store(id="store-report", data={}),
-                dcc.Store(id="store-chart", data={}),
-            ],
-        ),
-
-        # --- Main area ---
-        html.Div(
-            style={"flex": "1", "padding": "20px"},
-            children=[
-                dcc.Graph(id="map-graph", figure=build_map_figure()),
-                html.Div(style={"height": "20px"}),
-                dcc.Loading(
-                    id="loading-chart",
-                    type="default",
-                    children=dcc.Graph(id="gdd-chart", figure=go.Figure()),
-                ),
             ],
         ),
     ],
@@ -588,8 +679,10 @@ def update_variant_options(crop_name):
 
 # Callback 4: Compute GDD
 @callback(
+    Output("stage-table", "children"),
     Output("results-panel", "children"),
     Output("gdd-chart", "figure"),
+    Output("temp-chart", "figure"),
     Output("btn-download", "style"),
     Output("store-report", "data"),
     Output("store-chart", "data"),
@@ -605,18 +698,18 @@ def update_variant_options(crop_name):
 )
 def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode, loc_data):
     if lat is None or lon is None:
-        return "Please enter or search for a location.", go.Figure(), {"display": "none"}, {}, {}
+        return None, "Please enter or search for a location.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
     if not crop_name or not variant:
-        return "Please select a crop and season.", go.Figure(), {"display": "none"}, {}, {}
+        return None, "Please select a crop and season.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
 
     crop_id = f"{crop_name}_{variant}"
     if not planting_date_str:
-        return "Please select a planting date.", go.Figure(), {"display": "none"}, {}, {}
+        return None, "Please select a planting date.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
 
     try:
         planting_date = dt.date.fromisoformat(planting_date_str)
     except ValueError:
-        return "Invalid planting date.", go.Figure(), {"display": "none"}, {}, {}
+        return None, "Invalid planting date.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
 
     location_name = loc_data.get("name", f"{lat}, {lon}") if loc_data else f"{lat}, {lon}"
     crop_params = crops[crop_id]
@@ -638,21 +731,23 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
 
     today = dt.date.today()
 
+    stage_table = build_stage_table(crop_params, crop_label)
+
     # ---- Mode A: Check Progress ----
     if mode == "check":
         if planting_date > today:
             return (
-                "Check mode requires a past planting date.",
-                go.Figure(), {"display": "none"}, {}, {},
+                stage_table, "Check mode requires a past planting date.",
+                go.Figure(), go.Figure(), {"display": "none"}, {}, {},
             )
 
         try:
             weather = fetch_daily_temp(lat, lon, planting_date.isoformat(), today.isoformat())
         except Exception as e:
-            return f"Could not fetch weather data: {e}", go.Figure(), {"display": "none"}, {}, {}
+            return stage_table, f"Could not fetch weather data: {e}", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
 
         if weather.empty:
-            return "No weather data available for this location and date range.", go.Figure(), {"display": "none"}, {}, {}
+            return stage_table, "No weather data available for this location and date range.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
 
         season = CropSeason(crop_id, planting_date, weather, location_name)
         season.compute_gdd_series()
@@ -669,6 +764,7 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
         ])
 
         chart_fig = build_progress_chart(season)
+        temp_fig = build_temperature_chart(weather, location_name, planting_date)
 
         report_data = {
             "mode": "check",
@@ -686,14 +782,14 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
             "overall_progress": summary["overall_progress"] * 100,
         }
 
-        return results, chart_fig, download_btn_style, report_data, chart_fig.to_json()
+        return stage_table, results, chart_fig, temp_fig, download_btn_style, report_data, chart_fig.to_json()
 
     # ---- Mode B: Plan Harvest ----
     else:
         if planting_date <= today:
             return (
-                "Plan mode requires a future planting date.",
-                go.Figure(), {"display": "none"}, {}, {},
+                stage_table, "Plan mode requires a future planting date.",
+                go.Figure(), go.Figure(), {"display": "none"}, {}, {},
             )
 
         harvest_gdd = crop_params["stages"]["harvest"]
@@ -711,14 +807,15 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
         try:
             weather = fetch_climate_temp(lat, lon, planting_date.isoformat(), end_date.isoformat())
         except Exception as e:
-            return f"Could not fetch climate data: {e}", go.Figure(), {"display": "none"}, {}, {}
+            return stage_table, f"Could not fetch climate data: {e}", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
 
         if weather.empty:
-            return "No climate data available for this location and date range.", go.Figure(), {"display": "none"}, {}, {}
+            return stage_table, "No climate data available for this location and date range.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
 
         chart_fig, stage_dates = build_planning_chart(
             weather, crop_params, crop_id, location_name, planting_date,
         )
+        temp_fig = build_temperature_chart(weather, location_name, planting_date)
 
         result_items = [
             html.H4("Projected Growth Stages", style={"marginBottom": "8px"}),
@@ -749,7 +846,7 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
             "stage_dates": {k: str(v) for k, v in stage_dates.items()},
         }
 
-        return results, chart_fig, download_btn_style, report_data, chart_fig.to_json()
+        return stage_table, results, chart_fig, temp_fig, download_btn_style, report_data, chart_fig.to_json()
 
 
 # Callback 5: Download PDF
