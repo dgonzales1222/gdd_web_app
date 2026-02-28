@@ -123,7 +123,7 @@ def build_map_figure(lat=None, lon=None, location_name=""):
             zoom=zoom,
         ),
         margin=dict(l=0, r=0, t=0, b=0),
-        height=400,
+        height=250,
         showlegend=False,
     )
     return fig
@@ -350,10 +350,10 @@ crop_name_options = [
 app.layout = html.Div(
     style={"display": "flex", "fontFamily": "Arial, sans-serif", "minHeight": "100vh"},
     children=[
-        # --- Sidebar ---
+        # --- Left panel: Inputs ---
         html.Div(
             style={
-                "width": "340px",
+                "width": "380px",
                 "padding": "20px",
                 "backgroundColor": "#f8f9fa",
                 "borderRight": "1px solid #dee2e6",
@@ -362,6 +362,11 @@ app.layout = html.Div(
             children=[
                 html.H2("GDD Crop Phenology Tracker", style={"marginTop": 0}),
                 html.Hr(),
+
+                # Map
+                dcc.Graph(id="map-graph", figure=build_map_figure(),
+                          config={"scrollZoom": True},
+                          style={"marginBottom": "12px"}),
 
                 # Location search
                 html.Label("Search Location", style={"fontWeight": "bold"}),
@@ -450,12 +455,47 @@ app.layout = html.Div(
                     },
                 ),
 
+                # Documentation link
+                html.A(
+                    "Documentation",
+                    href="https://open-meteo.com/en/docs",
+                    target="_blank",
+                    style={
+                        "display": "block",
+                        "textAlign": "center",
+                        "color": "#007bff",
+                        "fontSize": "13px",
+                    },
+                ),
+
+                # Hidden stores
+                dcc.Store(id="store-location", data={}),
+                dcc.Store(id="store-report", data={}),
+                dcc.Store(id="store-chart", data={}),
+            ],
+        ),
+
+        # --- Right panel: Outputs ---
+        html.Div(
+            style={"flex": "1", "padding": "20px"},
+            children=[
                 # Results
                 dcc.Loading(
                     id="loading-results",
                     type="default",
                     children=html.Div(id="results-panel"),
                 ),
+
+                html.Div(style={"height": "20px"}),
+
+                # GDD Chart
+                dcc.Loading(
+                    id="loading-chart",
+                    type="default",
+                    children=dcc.Graph(id="gdd-chart", figure=go.Figure()),
+                ),
+
+                html.Div(style={"height": "12px"}),
 
                 # Download PDF
                 html.Button(
@@ -477,25 +517,6 @@ app.layout = html.Div(
                     },
                 ),
                 dcc.Download(id="download-pdf"),
-
-                # Hidden stores
-                dcc.Store(id="store-location", data={}),
-                dcc.Store(id="store-report", data={}),
-                dcc.Store(id="store-chart", data={}),
-            ],
-        ),
-
-        # --- Main area ---
-        html.Div(
-            style={"flex": "1", "padding": "20px"},
-            children=[
-                dcc.Graph(id="map-graph", figure=build_map_figure()),
-                html.Div(style={"height": "20px"}),
-                dcc.Loading(
-                    id="loading-chart",
-                    type="default",
-                    children=dcc.Graph(id="gdd-chart", figure=go.Figure()),
-                ),
             ],
         ),
     ],
