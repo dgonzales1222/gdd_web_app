@@ -1,0 +1,9 @@
+requests
+pandas
+matplotlib
+seaborn
+pytest
+dash
+plotly
+fpdf2
+kaleido
