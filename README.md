@@ -12,7 +12,9 @@ Unlike cropping calendar-based approaches, this project estimates crop developme
 
 ### Project File Structure
 
-- **`project.py`** – Main program file containing data retrieval from Open-Meteo, GDD computation, crop growth stage estimation, visualization, and the `CropSeason` class.
+- **`app.py`** – Interactive web application built with Dash and Plotly. Provides an interactive map, location search, two operational modes (Check Progress and Plan Harvest), GDD progress charts, and PDF report export.
+
+- **`project.py`** – Core program file containing data retrieval from Open-Meteo, GDD computation, crop growth stage estimation, visualization, and the `CropSeason` class.
 
 - **`crops_data.py`** – Defines crop-specific thermal parameters and cumulative GDD thresholds for phenological stages.
 
@@ -105,9 +107,40 @@ The program produces two types of outputs:
 Unit tests were implemented using `pytest` and are located in `test_project.py`.  
 The tests verify the correctness of the GDD calculation, phenological stage determination, `CropSeason` class behavior, and error handling for invalid inputs.
 
+### Web Application (`app.py`)
+
+In addition to the CLI tool, this project includes an interactive web application built with **Dash** and **Plotly**. The web app provides a visual, map-based interface for GDD computation and crop planning.
+
+#### Running the Web App
+
+```
+pip install -r requirements.txt
+python app.py
+```
+
+Then open `http://localhost:8050` in your browser.
+
+#### Features
+
+- **Interactive Map** – OpenStreetMap-based map with location search via the Open-Meteo Geocoding API. Users can search by place name or enter coordinates manually.
+- **Crop and Season Selection** – Two linked dropdowns: one for the crop name (e.g., Broccoli, Potato) and one for the season variant (e.g., Long, Short). The season dropdown updates dynamically based on the selected crop.
+- **Two Operational Modes:**
+  - **Check Progress** – For monitoring an existing crop. Uses the Open-Meteo Archive API to fetch actual weather data from the planting date to the current date and computes cumulative GDD, current growth stage, and progress.
+  - **Plan Harvest** – For planning a future planting. Uses the Open-Meteo Climate API (CMIP6 model: EC_Earth3P_HR) to project daily temperatures and estimate when each growth stage will be reached, including the projected harvest date.
+- **GDD Progress Chart** – Interactive Plotly chart showing cumulative GDD over time with growth stage threshold lines.
+- **PDF Report Export** – One-page PDF report containing location details, crop parameters, GDD results, and the embedded chart. Generated using `fpdf2` and downloadable directly from the browser.
+
+#### Web App Dependencies
+
+The web app requires the following additional packages (included in `requirements.txt`):
+- `dash` – Web application framework
+- `plotly` – Interactive charting
+- `fpdf2` – PDF report generation
+- `kaleido` – Plotly static image export for PDF embedding
+
 ### Limitations
 
-This program evaluates crop development only from the user-defined planting date up to the current date, using available historical temperature data to estimate cumulative Growing Degree Days (GDD) and the present phenological stage. As a result, the model is intended primarily as a tool for monitoring current-season crop performance rather than for full-season forecasting or yield prediction. The program is also limited to vegetables and field crops.
+The CLI tool evaluates crop development only from the user-defined planting date up to the current date, using available historical temperature data to estimate cumulative Growing Degree Days (GDD) and the present phenological stage. The web app extends this capability with a Plan Harvest mode that uses climate model projections (CMIP6) for future date ranges up to 2050. However, climate projections are based on modeled data and may differ from actual conditions. Both tools are limited to vegetables and field crops.
 
 ### References
 
