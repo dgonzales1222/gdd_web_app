@@ -287,12 +287,16 @@ def build_temperature_chart(weather_df, location_name, planting_date, vlines=Non
     ))
 
     for vdate, vlabel, vcolor in (vlines or []):
-        fig.add_vline(
-            x=vdate if isinstance(vdate, str) else str(vdate),
-            line_dash="dash",
-            line_color=vcolor,
-            annotation_text=vlabel,
-            annotation_position="top",
+        xval = vdate if isinstance(vdate, str) else str(vdate)
+        fig.add_shape(
+            type="line", x0=xval, x1=xval, y0=0, y1=1,
+            yref="paper", line=dict(dash="dash", color=vcolor, width=1.5),
+        )
+        fig.add_annotation(
+            x=xval, y=1, yref="paper",
+            text=vlabel, showarrow=False, textangle=-90,
+            font=dict(color=vcolor, size=11),
+            xanchor="left", yanchor="top",
         )
 
     fig.update_layout(
@@ -436,6 +440,60 @@ crop_name_options = [
     for name in sorted(crop_variants.keys())
 ]
 
+
+# Default preset: rice (short season), La Trinidad, Benguet
+_DEFAULT_LAT = 16.4563
+_DEFAULT_LON = 120.5879
+_DEFAULT_CROP = "rice"
+_DEFAULT_VARIANT = "short"
+_DEFAULT_CROP_ID = f"{_DEFAULT_CROP}_{_DEFAULT_VARIANT}"
+_DEFAULT_LOCATION = {
+    "name": "La Trinidad, Benguet, Philippines",
+    "latitude": _DEFAULT_LAT,
+    "longitude": _DEFAULT_LON,
+}
+_DEFAULT_PLANTING = (dt.date.today() - dt.timedelta(days=90)).isoformat()
+
+# Pre-compute default results at startup
+_default_crop_params = crops[_DEFAULT_CROP_ID]
+_default_crop_label = _DEFAULT_CROP_ID.replace("_", " ").title()
+_default_planting_date = dt.date.fromisoformat(_DEFAULT_PLANTING)
+try:
+    _default_weather = fetch_daily_temp(
+        _DEFAULT_LAT, _DEFAULT_LON,
+        _DEFAULT_PLANTING, dt.date.today().isoformat(),
+    )
+    _default_season = CropSeason(
+        _DEFAULT_CROP_ID, _default_planting_date,
+        _default_weather, _DEFAULT_LOCATION["name"],
+    )
+    _default_season.compute_gdd_series()
+    _default_summary = _default_season.summary_today()
+
+    _default_stage_table = build_stage_table(_default_crop_params, _default_crop_label)
+    _default_results = html.Div([
+        html.H4("Results", style={"marginBottom": "8px"}),
+        html.P(f"Date: {_default_summary['date']}"),
+        html.P(f"Crop: {_default_crop_label}"),
+        html.P(f"Cumulative GDD: {_default_summary['cumulative_gdd']:.2f}"),
+        html.P(f"Stage: {_default_summary['stage'].replace('_', ' ').title()}"),
+        html.P(f"Stage Progress: {_default_summary['stage_progress'] * 100:.1f}%"),
+        html.P(f"Overall Progress: {_default_summary['overall_progress'] * 100:.1f}%"),
+    ])
+    _default_gdd_chart = build_progress_chart(_default_season)
+    _default_temp_chart = build_temperature_chart(
+        _default_weather, _DEFAULT_LOCATION["name"], _default_planting_date,
+        vlines=[
+            (_DEFAULT_PLANTING, "Planting", "#2ca02c"),
+            (dt.date.today().isoformat(), "Current", "#1f77b4"),
+        ],
+    )
+except Exception:
+    _default_stage_table = None
+    _default_results = ""
+    _default_gdd_chart = go.Figure()
+    _default_temp_chart = go.Figure()
+
 app.layout = html.Div(
     style={"display": "flex", "fontFamily": "Arial, sans-serif", "minHeight": "100vh"},
     children=[
@@ -453,7 +511,7 @@ app.layout = html.Div(
                 html.Hr(),
 
                 # Map
-                dcc.Graph(id="map-graph", figure=build_map_figure(),
+                dcc.Graph(id="map-graph", figure=build_map_figure(_DEFAULT_LAT, _DEFAULT_LON, _DEFAULT_LOCATION["name"]),
                           config={"scrollZoom": True},
                           style={"marginBottom": "12px"}),
 
@@ -476,15 +534,16 @@ app.layout = html.Div(
                 html.Div(style={"display": "flex", "gap": "10px", "marginBottom": "12px"}, children=[
                     html.Div(style={"flex": 1}, children=[
                         html.Label("Latitude"),
-                        dcc.Input(id="input-lat", type="number", style={"width": "100%"}),
+                        dcc.Input(id="input-lat", type="number", value=_DEFAULT_LAT, style={"width": "100%"}),
                     ]),
                     html.Div(style={"flex": 1}, children=[
                         html.Label("Longitude"),
-                        dcc.Input(id="input-lon", type="number", style={"width": "100%"}),
+                        dcc.Input(id="input-lon", type="number", value=_DEFAULT_LON, style={"width": "100%"}),
                     ]),
                 ]),
 
-                html.Div(id="location-name", style={"marginBottom": "12px", "fontStyle": "italic"}),
+                html.Div(id="location-name", children=_DEFAULT_LOCATION["name"],
+                         style={"marginBottom": "12px", "fontStyle": "italic"}),
 
                 html.Hr(),
 
@@ -493,6 +552,7 @@ app.layout = html.Div(
                 dcc.Dropdown(
                     id="dropdown-crop-name",
                     options=crop_name_options,
+                    value=_DEFAULT_CROP,
                     placeholder="Select a crop...",
                     style={"marginBottom": "8px"},
                 ),
@@ -501,6 +561,7 @@ app.layout = html.Div(
                 html.Label("Season", style={"fontWeight": "bold"}),
                 dcc.Dropdown(
                     id="dropdown-variant",
+                    value=_DEFAULT_VARIANT,
                     placeholder="Select season...",
                     style={"marginBottom": "12px"},
                 ),
@@ -521,6 +582,8 @@ app.layout = html.Div(
                 html.Label("Planting Date", style={"fontWeight": "bold"}),
                 dcc.DatePickerSingle(
                     id="datepicker-planting",
+                    date=_DEFAULT_PLANTING,
+                    max_date_allowed=dt.date.today().isoformat(),
                     placeholder="Select date...",
                     style={"marginBottom": "12px"},
                 ),
@@ -558,7 +621,7 @@ app.layout = html.Div(
                 ),
 
                 # Hidden stores
-                dcc.Store(id="store-location", data={}),
+                dcc.Store(id="store-location", data=_DEFAULT_LOCATION),
                 dcc.Store(id="store-report", data={}),
                 dcc.Store(id="store-chart", data={}),
                 dcc.Store(id="store-temp-chart", data={}),
@@ -570,13 +633,13 @@ app.layout = html.Div(
             style={"flex": "1", "padding": "20px", "overflowY": "auto"},
             children=[
                 # GDD stage thresholds table
-                html.Div(id="stage-table"),
+                html.Div(id="stage-table", children=_default_stage_table),
 
                 # Results
                 dcc.Loading(
                     id="loading-results",
                     type="default",
-                    children=html.Div(id="results-panel"),
+                    children=html.Div(id="results-panel", children=_default_results),
                 ),
 
                 html.Div(style={"height": "20px"}),
@@ -585,14 +648,14 @@ app.layout = html.Div(
                 dcc.Loading(
                     id="loading-chart",
                     type="default",
-                    children=dcc.Graph(id="gdd-chart", figure=go.Figure()),
+                    children=dcc.Graph(id="gdd-chart", figure=_default_gdd_chart),
                 ),
 
                 # Temperature Chart
                 dcc.Loading(
                     id="loading-temp-chart",
                     type="default",
-                    children=dcc.Graph(id="temp-chart", figure=go.Figure()),
+                    children=dcc.Graph(id="temp-chart", figure=_default_temp_chart),
                 ),
 
                 html.Div(style={"height": "12px"}),
@@ -678,11 +741,12 @@ def update_map(lat, lon, loc_data):
     Output("datepicker-planting", "min_date_allowed"),
     Output("datepicker-planting", "date"),
     Input("radio-mode", "value"),
+    State("datepicker-planting", "date"),
 )
-def toggle_mode(mode):
+def toggle_mode(mode, current_date):
     today = dt.date.today()
     if mode == "check":
-        return today.isoformat(), None, None
+        return today.isoformat(), None, current_date or None
     else:
         return "2050-12-31", today.isoformat(), None
 
@@ -692,8 +756,9 @@ def toggle_mode(mode):
     Output("dropdown-variant", "options"),
     Output("dropdown-variant", "value"),
     Input("dropdown-crop-name", "value"),
+    State("dropdown-variant", "value"),
 )
-def update_variant_options(crop_name):
+def update_variant_options(crop_name, current_variant):
     if not crop_name:
         return [], None
 
@@ -702,7 +767,9 @@ def update_variant_options(crop_name):
         {"label": v.title(), "value": v}
         for v in variants
     ]
-    # Auto-select if only one variant
+    # Keep current value if still valid, otherwise auto-select if only one
+    if current_variant in variants:
+        return options, current_variant
     default = variants[0] if len(variants) == 1 else None
     return options, default
 
