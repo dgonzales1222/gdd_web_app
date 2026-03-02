@@ -260,8 +260,14 @@ def build_planning_chart(weather_df, crop_params, crop_id, location_name, planti
     return fig, stage_dates
 
 
-def build_temperature_chart(weather_df, location_name, planting_date):
-    """Build a Plotly chart showing daily Tmin and Tmax over time."""
+def build_temperature_chart(weather_df, location_name, planting_date, vlines=None):
+    """Build a Plotly chart showing daily Tmin and Tmax over time.
+
+    Parameters
+    ----------
+    vlines : list of (date, label, color) tuples, optional
+        Vertical reference lines to draw on the chart.
+    """
     fig = go.Figure()
 
     dates = weather_df["date"]
@@ -279,6 +285,19 @@ def build_temperature_chart(weather_df, location_name, planting_date):
         fill="tonexty",
         fillcolor="rgba(31,119,180,0.15)",
     ))
+
+    for vdate, vlabel, vcolor in (vlines or []):
+        xval = vdate if isinstance(vdate, str) else str(vdate)
+        fig.add_shape(
+            type="line", x0=xval, x1=xval, y0=0, y1=1,
+            yref="paper", line=dict(dash="dash", color=vcolor, width=1.5),
+        )
+        fig.add_annotation(
+            x=xval, y=1, yref="paper",
+            text=vlabel, showarrow=False, textangle=-90,
+            font=dict(color=vcolor, size=11),
+            xanchor="left", yanchor="top",
+        )
 
     fig.update_layout(
         title=f"Daily Temperature \u2013 {location_name}",
@@ -320,8 +339,8 @@ def build_stage_table(crop_params, crop_label):
     ])
 
 
-def generate_pdf_report(report_data, chart_fig):
-    """Generate a 1-page PDF report and return it as bytes."""
+def generate_pdf_report(report_data, chart_fig, temp_fig=None):
+    """Generate a PDF report and return it as bytes."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=False)
@@ -370,14 +389,28 @@ def generate_pdf_report(report_data, chart_fig):
 
     pdf.ln(4)
 
-    # Chart image
+    # GDD Chart image
     try:
         img_bytes = pio.to_image(chart_fig, format="png", width=700, height=350)
         img_stream = io.BytesIO(img_bytes)
         pdf.image(img_stream, x=10, w=190)
     except Exception:
         pdf.set_font("Helvetica", "I", 10)
-        pdf.cell(0, 6, "(Chart image could not be generated)", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, "(GDD chart image could not be generated)", new_x="LMARGIN", new_y="NEXT")
+
+    # Temperature Chart image (page 2)
+    if temp_fig is not None:
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Temperature Time Series", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(4)
+        try:
+            temp_bytes = pio.to_image(temp_fig, format="png", width=700, height=300)
+            temp_stream = io.BytesIO(temp_bytes)
+            pdf.image(temp_stream, x=10, w=190)
+        except Exception:
+            pdf.set_font("Helvetica", "I", 10)
+            pdf.cell(0, 6, "(Temperature chart image could not be generated)", new_x="LMARGIN", new_y="NEXT")
 
     # Footer
     pdf.set_y(-20)
@@ -407,6 +440,60 @@ crop_name_options = [
     for name in sorted(crop_variants.keys())
 ]
 
+
+# Default preset: rice (short season), La Trinidad, Benguet
+_DEFAULT_LAT = 16.4563
+_DEFAULT_LON = 120.5879
+_DEFAULT_CROP = "rice"
+_DEFAULT_VARIANT = "short"
+_DEFAULT_CROP_ID = f"{_DEFAULT_CROP}_{_DEFAULT_VARIANT}"
+_DEFAULT_LOCATION = {
+    "name": "La Trinidad, Benguet, Philippines",
+    "latitude": _DEFAULT_LAT,
+    "longitude": _DEFAULT_LON,
+}
+_DEFAULT_PLANTING = (dt.date.today() - dt.timedelta(days=90)).isoformat()
+
+# Pre-compute default results at startup
+_default_crop_params = crops[_DEFAULT_CROP_ID]
+_default_crop_label = _DEFAULT_CROP_ID.replace("_", " ").title()
+_default_planting_date = dt.date.fromisoformat(_DEFAULT_PLANTING)
+try:
+    _default_weather = fetch_daily_temp(
+        _DEFAULT_LAT, _DEFAULT_LON,
+        _DEFAULT_PLANTING, dt.date.today().isoformat(),
+    )
+    _default_season = CropSeason(
+        _DEFAULT_CROP_ID, _default_planting_date,
+        _default_weather, _DEFAULT_LOCATION["name"],
+    )
+    _default_season.compute_gdd_series()
+    _default_summary = _default_season.summary_today()
+
+    _default_stage_table = build_stage_table(_default_crop_params, _default_crop_label)
+    _default_results = html.Div([
+        html.H4("Results", style={"marginBottom": "8px"}),
+        html.P(f"Date: {_default_summary['date']}"),
+        html.P(f"Crop: {_default_crop_label}"),
+        html.P(f"Cumulative GDD: {_default_summary['cumulative_gdd']:.2f}"),
+        html.P(f"Stage: {_default_summary['stage'].replace('_', ' ').title()}"),
+        html.P(f"Stage Progress: {_default_summary['stage_progress'] * 100:.1f}%"),
+        html.P(f"Overall Progress: {_default_summary['overall_progress'] * 100:.1f}%"),
+    ])
+    _default_gdd_chart = build_progress_chart(_default_season)
+    _default_temp_chart = build_temperature_chart(
+        _default_weather, _DEFAULT_LOCATION["name"], _default_planting_date,
+        vlines=[
+            (_DEFAULT_PLANTING, "Planting", "#2ca02c"),
+            (dt.date.today().isoformat(), "Current", "#1f77b4"),
+        ],
+    )
+except Exception:
+    _default_stage_table = None
+    _default_results = ""
+    _default_gdd_chart = go.Figure()
+    _default_temp_chart = go.Figure()
+
 app.layout = html.Div(
     style={"display": "flex", "fontFamily": "Arial, sans-serif", "minHeight": "100vh"},
     children=[
@@ -424,7 +511,7 @@ app.layout = html.Div(
                 html.Hr(),
 
                 # Map
-                dcc.Graph(id="map-graph", figure=build_map_figure(),
+                dcc.Graph(id="map-graph", figure=build_map_figure(_DEFAULT_LAT, _DEFAULT_LON, _DEFAULT_LOCATION["name"]),
                           config={"scrollZoom": True},
                           style={"marginBottom": "12px"}),
 
@@ -447,15 +534,16 @@ app.layout = html.Div(
                 html.Div(style={"display": "flex", "gap": "10px", "marginBottom": "12px"}, children=[
                     html.Div(style={"flex": 1}, children=[
                         html.Label("Latitude"),
-                        dcc.Input(id="input-lat", type="number", style={"width": "100%"}),
+                        dcc.Input(id="input-lat", type="number", value=_DEFAULT_LAT, style={"width": "100%"}),
                     ]),
                     html.Div(style={"flex": 1}, children=[
                         html.Label("Longitude"),
-                        dcc.Input(id="input-lon", type="number", style={"width": "100%"}),
+                        dcc.Input(id="input-lon", type="number", value=_DEFAULT_LON, style={"width": "100%"}),
                     ]),
                 ]),
 
-                html.Div(id="location-name", style={"marginBottom": "12px", "fontStyle": "italic"}),
+                html.Div(id="location-name", children=_DEFAULT_LOCATION["name"],
+                         style={"marginBottom": "12px", "fontStyle": "italic"}),
 
                 html.Hr(),
 
@@ -464,6 +552,7 @@ app.layout = html.Div(
                 dcc.Dropdown(
                     id="dropdown-crop-name",
                     options=crop_name_options,
+                    value=_DEFAULT_CROP,
                     placeholder="Select a crop...",
                     style={"marginBottom": "8px"},
                 ),
@@ -472,6 +561,7 @@ app.layout = html.Div(
                 html.Label("Season", style={"fontWeight": "bold"}),
                 dcc.Dropdown(
                     id="dropdown-variant",
+                    value=_DEFAULT_VARIANT,
                     placeholder="Select season...",
                     style={"marginBottom": "12px"},
                 ),
@@ -492,6 +582,8 @@ app.layout = html.Div(
                 html.Label("Planting Date", style={"fontWeight": "bold"}),
                 dcc.DatePickerSingle(
                     id="datepicker-planting",
+                    date=_DEFAULT_PLANTING,
+                    max_date_allowed=dt.date.today().isoformat(),
                     placeholder="Select date...",
                     style={"marginBottom": "12px"},
                 ),
@@ -529,9 +621,10 @@ app.layout = html.Div(
                 ),
 
                 # Hidden stores
-                dcc.Store(id="store-location", data={}),
+                dcc.Store(id="store-location", data=_DEFAULT_LOCATION),
                 dcc.Store(id="store-report", data={}),
                 dcc.Store(id="store-chart", data={}),
+                dcc.Store(id="store-temp-chart", data={}),
             ],
         ),
 
@@ -540,13 +633,13 @@ app.layout = html.Div(
             style={"flex": "1", "padding": "20px", "overflowY": "auto"},
             children=[
                 # GDD stage thresholds table
-                html.Div(id="stage-table"),
+                html.Div(id="stage-table", children=_default_stage_table),
 
                 # Results
                 dcc.Loading(
                     id="loading-results",
                     type="default",
-                    children=html.Div(id="results-panel"),
+                    children=html.Div(id="results-panel", children=_default_results),
                 ),
 
                 html.Div(style={"height": "20px"}),
@@ -555,14 +648,14 @@ app.layout = html.Div(
                 dcc.Loading(
                     id="loading-chart",
                     type="default",
-                    children=dcc.Graph(id="gdd-chart", figure=go.Figure()),
+                    children=dcc.Graph(id="gdd-chart", figure=_default_gdd_chart),
                 ),
 
                 # Temperature Chart
                 dcc.Loading(
                     id="loading-temp-chart",
                     type="default",
-                    children=dcc.Graph(id="temp-chart", figure=go.Figure()),
+                    children=dcc.Graph(id="temp-chart", figure=_default_temp_chart),
                 ),
 
                 html.Div(style={"height": "12px"}),
@@ -648,11 +741,12 @@ def update_map(lat, lon, loc_data):
     Output("datepicker-planting", "min_date_allowed"),
     Output("datepicker-planting", "date"),
     Input("radio-mode", "value"),
+    State("datepicker-planting", "date"),
 )
-def toggle_mode(mode):
+def toggle_mode(mode, current_date):
     today = dt.date.today()
     if mode == "check":
-        return today.isoformat(), None, None
+        return today.isoformat(), None, current_date or None
     else:
         return "2050-12-31", today.isoformat(), None
 
@@ -662,8 +756,9 @@ def toggle_mode(mode):
     Output("dropdown-variant", "options"),
     Output("dropdown-variant", "value"),
     Input("dropdown-crop-name", "value"),
+    State("dropdown-variant", "value"),
 )
-def update_variant_options(crop_name):
+def update_variant_options(crop_name, current_variant):
     if not crop_name:
         return [], None
 
@@ -672,7 +767,9 @@ def update_variant_options(crop_name):
         {"label": v.title(), "value": v}
         for v in variants
     ]
-    # Auto-select if only one variant
+    # Keep current value if still valid, otherwise auto-select if only one
+    if current_variant in variants:
+        return options, current_variant
     default = variants[0] if len(variants) == 1 else None
     return options, default
 
@@ -686,6 +783,7 @@ def update_variant_options(crop_name):
     Output("btn-download", "style"),
     Output("store-report", "data"),
     Output("store-chart", "data"),
+    Output("store-temp-chart", "data"),
     Input("btn-compute", "n_clicks"),
     State("input-lat", "value"),
     State("input-lon", "value"),
@@ -698,18 +796,18 @@ def update_variant_options(crop_name):
 )
 def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode, loc_data):
     if lat is None or lon is None:
-        return None, "Please enter or search for a location.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
+        return None, "Please enter or search for a location.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}, {}
     if not crop_name or not variant:
-        return None, "Please select a crop and season.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
+        return None, "Please select a crop and season.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}, {}
 
     crop_id = f"{crop_name}_{variant}"
     if not planting_date_str:
-        return None, "Please select a planting date.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
+        return None, "Please select a planting date.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}, {}
 
     try:
         planting_date = dt.date.fromisoformat(planting_date_str)
     except ValueError:
-        return None, "Invalid planting date.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
+        return None, "Invalid planting date.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}, {}
 
     location_name = loc_data.get("name", f"{lat}, {lon}") if loc_data else f"{lat}, {lon}"
     crop_params = crops[crop_id]
@@ -738,16 +836,16 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
         if planting_date > today:
             return (
                 stage_table, "Check mode requires a past planting date.",
-                go.Figure(), go.Figure(), {"display": "none"}, {}, {},
+                go.Figure(), go.Figure(), {"display": "none"}, {}, {}, {},
             )
 
         try:
             weather = fetch_daily_temp(lat, lon, planting_date.isoformat(), today.isoformat())
         except Exception as e:
-            return stage_table, f"Could not fetch weather data: {e}", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
+            return stage_table, f"Could not fetch weather data: {e}", go.Figure(), go.Figure(), {"display": "none"}, {}, {}, {}
 
         if weather.empty:
-            return stage_table, "No weather data available for this location and date range.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
+            return stage_table, "No weather data available for this location and date range.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}, {}
 
         season = CropSeason(crop_id, planting_date, weather, location_name)
         season.compute_gdd_series()
@@ -764,7 +862,11 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
         ])
 
         chart_fig = build_progress_chart(season)
-        temp_fig = build_temperature_chart(weather, location_name, planting_date)
+        temp_vlines = [
+            (planting_date.isoformat(), "Planting", "#2ca02c"),
+            (today.isoformat(), "Current", "#1f77b4"),
+        ]
+        temp_fig = build_temperature_chart(weather, location_name, planting_date, vlines=temp_vlines)
 
         report_data = {
             "mode": "check",
@@ -782,14 +884,14 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
             "overall_progress": summary["overall_progress"] * 100,
         }
 
-        return stage_table, results, chart_fig, temp_fig, download_btn_style, report_data, chart_fig.to_json()
+        return stage_table, results, chart_fig, temp_fig, download_btn_style, report_data, chart_fig.to_json(), temp_fig.to_json()
 
     # ---- Mode B: Plan Harvest ----
     else:
         if planting_date <= today:
             return (
                 stage_table, "Plan mode requires a future planting date.",
-                go.Figure(), go.Figure(), {"display": "none"}, {}, {},
+                go.Figure(), go.Figure(), {"display": "none"}, {}, {}, {},
             )
 
         harvest_gdd = crop_params["stages"]["harvest"]
@@ -807,15 +909,20 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
         try:
             weather = fetch_climate_temp(lat, lon, planting_date.isoformat(), end_date.isoformat())
         except Exception as e:
-            return stage_table, f"Could not fetch climate data: {e}", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
+            return stage_table, f"Could not fetch climate data: {e}", go.Figure(), go.Figure(), {"display": "none"}, {}, {}, {}
 
         if weather.empty:
-            return stage_table, "No climate data available for this location and date range.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}
+            return stage_table, "No climate data available for this location and date range.", go.Figure(), go.Figure(), {"display": "none"}, {}, {}, {}
 
         chart_fig, stage_dates = build_planning_chart(
             weather, crop_params, crop_id, location_name, planting_date,
         )
-        temp_fig = build_temperature_chart(weather, location_name, planting_date)
+        temp_vlines = [
+            (planting_date.isoformat(), "Planting", "#2ca02c"),
+        ]
+        if "harvest" in stage_dates:
+            temp_vlines.append((str(stage_dates["harvest"]), "Harvest", "#9467bd"))
+        temp_fig = build_temperature_chart(weather, location_name, planting_date, vlines=temp_vlines)
 
         result_items = [
             html.H4("Projected Growth Stages", style={"marginBottom": "8px"}),
@@ -846,7 +953,7 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
             "stage_dates": {k: str(v) for k, v in stage_dates.items()},
         }
 
-        return stage_table, results, chart_fig, temp_fig, download_btn_style, report_data, chart_fig.to_json()
+        return stage_table, results, chart_fig, temp_fig, download_btn_style, report_data, chart_fig.to_json(), temp_fig.to_json()
 
 
 # Callback 5: Download PDF
@@ -855,9 +962,10 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
     Input("btn-download", "n_clicks"),
     State("store-report", "data"),
     State("store-chart", "data"),
+    State("store-temp-chart", "data"),
     prevent_initial_call=True,
 )
-def download_pdf(n_clicks, report_data, chart_json):
+def download_pdf(n_clicks, report_data, chart_json, temp_chart_json):
     if not report_data or not chart_json:
         return no_update
 
@@ -866,7 +974,14 @@ def download_pdf(n_clicks, report_data, chart_json):
     except Exception:
         chart_fig = go.Figure()
 
-    pdf_bytes = generate_pdf_report(report_data, chart_fig)
+    temp_fig = None
+    if temp_chart_json:
+        try:
+            temp_fig = go.Figure(pio.from_json(temp_chart_json))
+        except Exception:
+            pass
+
+    pdf_bytes = generate_pdf_report(report_data, chart_fig, temp_fig)
 
     crop = report_data.get("crop_label", "crop").replace(" ", "_")
     filename = f"GDD_Report_{crop}_{dt.date.today().isoformat()}.pdf"
