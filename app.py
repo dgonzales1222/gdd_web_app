@@ -140,7 +140,10 @@ def build_progress_chart(season):
     t_upper = season.params["t_upper"]
 
     upper_daily = t_upper - t_base
-    x_ideal = list(range(1, 201))
+    harvest_gdd = season.params["stages"].get("harvest", 0)
+    days_to_harvest = int(harvest_gdd / upper_daily) + 1 if upper_daily > 0 and harvest_gdd > 0 else window_days
+    total_days = max(window_days, days_to_harvest)
+    x_ideal = list(range(1, total_days + 1))
     ideal_gdd = [upper_daily * i for i in x_ideal]
 
     fig.add_trace(go.Scatter(
@@ -202,9 +205,8 @@ def build_progress_chart(season):
         title=f"Cumulative GDD Progress \u2013 {crop_label} ({season.location})",
         xaxis_title="Days since planting",
         yaxis_title="Cumulative GDD",
-        xaxis=dict(range=[0, 200]),
         template="plotly_white",
-        height=550,
+        height=700,
     )
     return fig
 
@@ -293,7 +295,7 @@ def build_planning_chart(weather_df, crop_params, crop_id, location_name, planti
         xaxis_title="Days since planting",
         yaxis_title="Cumulative GDD",
         template="plotly_white",
-        height=400,
+        height=700,
     )
 
     return fig, stage_dates
@@ -352,6 +354,26 @@ def build_temperature_chart(weather_df, location_name, planting_date, vlines=Non
         height=300,
     )
     return fig
+
+
+def compute_stage_dates(weather_df, crop_params, planting_date):
+    """Find the date each growth stage threshold was first reached.
+
+    Returns a dict mapping stage name to the date (or None if not yet reached).
+    """
+    stages = crop_params["stages"]
+    if not isinstance(planting_date, dt.date):
+        planting_date = dt.date.fromisoformat(str(planting_date))
+    stage_dates = {}
+    for stage_name in ["initial", "development", "mid_season", "harvest"]:
+        threshold = stages.get(stage_name, 0)
+        reached = weather_df[weather_df["cumulative_gdd"] >= threshold]
+        if not reached.empty:
+            d = reached.iloc[0]["date"]
+            stage_dates[stage_name] = d.date() if hasattr(d, "date") else d
+        else:
+            stage_dates[stage_name] = None
+    return stage_dates
 
 
 def build_stage_table(crop_params, crop_label):
@@ -516,6 +538,14 @@ try:
     _default_summary = _default_season.summary_today()
 
     _default_stage_table = build_stage_table(_default_crop_params, _default_crop_label)
+    _default_stage_dates = compute_stage_dates(
+        _default_season.weather, _default_crop_params, _default_planting_date,
+    )
+    _stage_date_items = []
+    for sn in ["initial", "development", "mid_season", "harvest"]:
+        label = sn.replace("_", " ").title()
+        sd = _default_stage_dates.get(sn)
+        _stage_date_items.append(html.P(f"{label}: {sd}" if sd else f"{label}: not yet reached"))
     _default_results = html.Div([
         html.H4("Results", style={"marginBottom": "8px"}),
         html.Div(style={"display": "flex", "gap": "24px"}, children=[
@@ -523,12 +553,13 @@ try:
                 html.P(f"Date: {_default_summary['date']}"),
                 html.P(f"Crop: {_default_crop_label}"),
                 html.P(f"Cumulative GDD: {_default_summary['cumulative_gdd']:.2f}"),
-            ], style={"flex": "1"}),
-            html.Div([
                 html.P(f"Stage: {_default_summary['stage'].replace('_', ' ').title()}"),
                 html.P(f"Stage Progress: {_default_summary['stage_progress'] * 100:.1f}%"),
                 html.P(f"Overall Progress: {_default_summary['overall_progress'] * 100:.1f}%"),
             ], style={"flex": "1"}),
+            html.Div([
+                html.H5("Stage Entry Dates", style={"marginBottom": "4px"}),
+            ] + _stage_date_items, style={"flex": "1"}),
         ]),
     ])
     _default_gdd_chart = build_progress_chart(_default_season)
@@ -902,6 +933,13 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
         season.compute_gdd_series()
         summary = season.summary_today()
 
+        stage_entry_dates = compute_stage_dates(season.weather, crop_params, planting_date)
+        stage_date_items = []
+        for sn in ["initial", "development", "mid_season", "harvest"]:
+            label = sn.replace("_", " ").title()
+            sd = stage_entry_dates.get(sn)
+            stage_date_items.append(html.P(f"{label}: {sd}" if sd else f"{label}: not yet reached"))
+
         results = html.Div([
             html.H4("Results", style={"marginBottom": "8px"}),
             html.Div(style={"display": "flex", "gap": "24px"}, children=[
@@ -909,12 +947,13 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
                     html.P(f"Date: {summary['date']}"),
                     html.P(f"Crop: {crop_label}"),
                     html.P(f"Cumulative GDD: {summary['cumulative_gdd']:.2f}"),
-                ], style={"flex": "1"}),
-                html.Div([
                     html.P(f"Stage: {summary['stage'].replace('_', ' ').title()}"),
                     html.P(f"Stage Progress: {summary['stage_progress'] * 100:.1f}%"),
                     html.P(f"Overall Progress: {summary['overall_progress'] * 100:.1f}%"),
                 ], style={"flex": "1"}),
+                html.Div([
+                    html.H5("Stage Entry Dates", style={"marginBottom": "4px"}),
+                ] + stage_date_items, style={"flex": "1"}),
             ]),
         ])
 
