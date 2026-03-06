@@ -140,10 +140,11 @@ def build_progress_chart(season):
     t_upper = season.params["t_upper"]
 
     upper_daily = t_upper - t_base
-    ideal_gdd = [upper_daily * i for i in x_days]
+    x_ideal = list(range(1, 201))
+    ideal_gdd = [upper_daily * i for i in x_ideal]
 
     fig.add_trace(go.Scatter(
-        x=x_days, y=ideal_gdd,
+        x=x_ideal, y=ideal_gdd,
         mode="lines", name="Ideal GDD",
         line=dict(dash="dash", width=1.5, color="gray"),
     ))
@@ -160,6 +161,25 @@ def build_progress_chart(season):
         marker=dict(size=10, color="#1f77b4"),
         showlegend=False,
     ))
+
+    # Temperature increase scenario lines (+2 to +10 °C, step 2)
+    weather = season.weather
+    scenario_colors = ["#ff9896", "#ff7f0e", "#d62728", "#9467bd", "#8c564b"]
+    for i, delta in enumerate(range(2, 11, 2)):
+        shifted_gdd = [
+            compute_daily_gdd(row["tmin"] + delta, row["tmax"] + delta, t_base, t_upper)
+            for _, row in weather.iterrows()
+        ]
+        cum_shifted = []
+        total = 0.0
+        for g in shifted_gdd:
+            total += g
+            cum_shifted.append(total)
+        fig.add_trace(go.Scatter(
+            x=x_days, y=cum_shifted,
+            mode="lines", name=f"+{delta}\u00b0C",
+            line=dict(width=1.2, color=scenario_colors[i]),
+        ))
 
     stages = season.params["stages"]
     colors = {
@@ -182,8 +202,9 @@ def build_progress_chart(season):
         title=f"Cumulative GDD Progress \u2013 {crop_label} ({season.location})",
         xaxis_title="Days since planting",
         yaxis_title="Cumulative GDD",
+        xaxis=dict(range=[0, 200]),
         template="plotly_white",
-        height=400,
+        height=550,
     )
     return fig
 
@@ -220,6 +241,24 @@ def build_planning_chart(weather_df, crop_params, crop_id, location_name, planti
         mode="lines", name="Projected GDD (Climate Model)",
         line=dict(width=2, color="#ff7f0e"),
     ))
+
+    # Temperature increase scenario lines (+2 to +10 °C, step 2)
+    scenario_colors = ["#ff9896", "#ff7f0e", "#d62728", "#9467bd", "#8c564b"]
+    for i, delta in enumerate(range(2, 11, 2)):
+        shifted_gdd = [
+            compute_daily_gdd(row["tmin"] + delta, row["tmax"] + delta, t_base, t_upper)
+            for _, row in weather_df.iterrows()
+        ]
+        cum_shifted = []
+        total = 0.0
+        for g in shifted_gdd:
+            total += g
+            cum_shifted.append(total)
+        fig.add_trace(go.Scatter(
+            x=x_days, y=cum_shifted,
+            mode="lines", name=f"+{delta}\u00b0C",
+            line=dict(width=1.2, color=scenario_colors[i]),
+        ))
 
     colors = {
         "initial": "#2ca02c",
@@ -270,16 +309,20 @@ def build_temperature_chart(weather_df, location_name, planting_date, vlines=Non
     """
     fig = go.Figure()
 
-    dates = weather_df["date"]
+    # Convert dates to days since planting
+    if not isinstance(planting_date, dt.date):
+        planting_date = dt.date.fromisoformat(str(planting_date))
+    dates = pd.to_datetime(weather_df["date"])
+    x_days = [(d.date() - planting_date).days for d in dates]
 
     fig.add_trace(go.Scatter(
-        x=dates, y=weather_df["tmax"],
+        x=x_days, y=weather_df["tmax"],
         mode="lines", name="Tmax",
         line=dict(width=1.5, color="#d62728"),
     ))
 
     fig.add_trace(go.Scatter(
-        x=dates, y=weather_df["tmin"],
+        x=x_days, y=weather_df["tmin"],
         mode="lines", name="Tmin",
         line=dict(width=1.5, color="#1f77b4"),
         fill="tonexty",
@@ -287,7 +330,9 @@ def build_temperature_chart(weather_df, location_name, planting_date, vlines=Non
     ))
 
     for vdate, vlabel, vcolor in (vlines or []):
-        xval = vdate if isinstance(vdate, str) else str(vdate)
+        if not isinstance(vdate, dt.date):
+            vdate = dt.date.fromisoformat(str(vdate))
+        xval = (vdate - planting_date).days
         fig.add_shape(
             type="line", x0=xval, x1=xval, y0=0, y1=1,
             yref="paper", line=dict(dash="dash", color=vcolor, width=1.5),
@@ -301,7 +346,7 @@ def build_temperature_chart(weather_df, location_name, planting_date, vlines=Non
 
     fig.update_layout(
         title=f"Daily Temperature \u2013 {location_name}",
-        xaxis_title="Date",
+        xaxis_title="Days since planting",
         yaxis_title="Temperature (\u00b0C)",
         template="plotly_white",
         height=300,
@@ -473,12 +518,18 @@ try:
     _default_stage_table = build_stage_table(_default_crop_params, _default_crop_label)
     _default_results = html.Div([
         html.H4("Results", style={"marginBottom": "8px"}),
-        html.P(f"Date: {_default_summary['date']}"),
-        html.P(f"Crop: {_default_crop_label}"),
-        html.P(f"Cumulative GDD: {_default_summary['cumulative_gdd']:.2f}"),
-        html.P(f"Stage: {_default_summary['stage'].replace('_', ' ').title()}"),
-        html.P(f"Stage Progress: {_default_summary['stage_progress'] * 100:.1f}%"),
-        html.P(f"Overall Progress: {_default_summary['overall_progress'] * 100:.1f}%"),
+        html.Div(style={"display": "flex", "gap": "24px"}, children=[
+            html.Div([
+                html.P(f"Date: {_default_summary['date']}"),
+                html.P(f"Crop: {_default_crop_label}"),
+                html.P(f"Cumulative GDD: {_default_summary['cumulative_gdd']:.2f}"),
+            ], style={"flex": "1"}),
+            html.Div([
+                html.P(f"Stage: {_default_summary['stage'].replace('_', ' ').title()}"),
+                html.P(f"Stage Progress: {_default_summary['stage_progress'] * 100:.1f}%"),
+                html.P(f"Overall Progress: {_default_summary['overall_progress'] * 100:.1f}%"),
+            ], style={"flex": "1"}),
+        ]),
     ])
     _default_gdd_chart = build_progress_chart(_default_season)
     _default_temp_chart = build_temperature_chart(
@@ -853,12 +904,18 @@ def compute_gdd(n_clicks, lat, lon, crop_name, variant, planting_date_str, mode,
 
         results = html.Div([
             html.H4("Results", style={"marginBottom": "8px"}),
-            html.P(f"Date: {summary['date']}"),
-            html.P(f"Crop: {crop_label}"),
-            html.P(f"Cumulative GDD: {summary['cumulative_gdd']:.2f}"),
-            html.P(f"Stage: {summary['stage'].replace('_', ' ').title()}"),
-            html.P(f"Stage Progress: {summary['stage_progress'] * 100:.1f}%"),
-            html.P(f"Overall Progress: {summary['overall_progress'] * 100:.1f}%"),
+            html.Div(style={"display": "flex", "gap": "24px"}, children=[
+                html.Div([
+                    html.P(f"Date: {summary['date']}"),
+                    html.P(f"Crop: {crop_label}"),
+                    html.P(f"Cumulative GDD: {summary['cumulative_gdd']:.2f}"),
+                ], style={"flex": "1"}),
+                html.Div([
+                    html.P(f"Stage: {summary['stage'].replace('_', ' ').title()}"),
+                    html.P(f"Stage Progress: {summary['stage_progress'] * 100:.1f}%"),
+                    html.P(f"Overall Progress: {summary['overall_progress'] * 100:.1f}%"),
+                ], style={"flex": "1"}),
+            ]),
         ])
 
         chart_fig = build_progress_chart(season)
